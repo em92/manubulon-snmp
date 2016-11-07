@@ -85,9 +85,14 @@ my $linkproof_cpu= "1.3.6.1.4.1.89.35.1.55.0"; # CPU RE (Routing Engine Tasks)
 my $hpux_load_1_min="1.3.6.1.4.1.11.2.3.1.1.3.0";
 my $hpux_load_5_min="1.3.6.1.4.1.11.2.3.1.1.4.0";
 my $hpux_load_15_min="1.3.6.1.4.1.11.2.3.1.1.5.0";
- 
+
+# Polygon cpu usage
+my $plgn_load_5_sec="1.3.6.1.4.1.14885.1000.5.1.1.1.1.2.100";
+my $plgn_load_1_min="1.3.6.1.4.1.14885.1000.5.1.1.1.1.3.100";
+my $plgn_load_5_min="1.3.6.1.4.1.14885.1000.5.1.1.1.1.4.100";
+
 # valid values 
-my @valid_types = ("stand","netsc","netsl","as400","cisco","cata","nsc","fg","bc","nokia","hp","lp","hpux","n5k");
+my @valid_types = ("stand","netsc","netsl","as400","cisco","cata","nsc","fg","bc","nokia","hp","lp","hpux","n5k","polygon");
 # CPU OID array
 my %cpu_oid = ("netsc",$ns_cpu_idle,"as400",$as400_cpu,"bc",$bluecoat_cpu,"nokia",$nokia_cpu,"hp",$procurve_cpu,"lp",$linkproof_cpu,"fg",$fortigate_cpu, "n5k",$n5k_cpu);
 
@@ -101,7 +106,7 @@ my $o_domain=   'udp/ipv4';	# protocol
 my $o_help=	undef; 		# wan't some help ?
 my $o_verb=	undef;		# verbose mode
 my $o_version=	undef;		# print version
-# check type  : stand | netsc |  netsl | as400 | cisco | cata | nsc | fg | bc | nokia | hp | lp  | hpux
+# check type  : stand | netsc |  netsl | as400 | cisco | cata | nsc | fg | bc | nokia | hp | lp  | hpux | polygon
 my $o_check_type= "stand";	
 # End compatibility
 my $o_warn=	undef;		# warning level
@@ -124,7 +129,7 @@ my $o_privpass= undef;		# priv password
 sub p_version { print "check_snmp_load version : $Version\n"; }
 
 sub print_usage {
-    print "Usage: $0 [-v] -H <host> -C <snmp_community> [-2] | (-l login -x passwd [-X pass -L <authp>,<privp>])  [-p <port>] [-P <protocol>] -w <warn level> -c <crit level> -T=[stand|netsl|netsc|as400|cisco|cata|nsc|fg|bc|nokia|hp|lp|hpux] [-f] [-t <timeout>] [-V]\n";
+    print "Usage: $0 [-v] -H <host> -C <snmp_community> [-2] | (-l login -x passwd [-X pass -L <authp>,<privp>])  [-p <port>] [-P <protocol>] -w <warn level> -c <crit level> -T=[stand|netsl|netsc|as400|cisco|cata|nsc|fg|bc|nokia|hp|lp|hpux|polygon] [-f] [-t <timeout>] [-V]\n";
 }
 
 sub isnnum { # Return true if arg is not a number
@@ -173,23 +178,24 @@ sub help {
    critical level for cpu in percent (on one minute)
    1 value check : critical level for cpu in percent (on one minute)
    3 value check : comma separated level for load or cpu for 1min, 5min, 15min 
--T, --type=stand|netsl|netsc|as400|cisco|bc|nokia|hp|lp
+-T, --type=stand|netsl|netsc|as400|cisco|bc|nokia|hp|lp|polygon
 	CPU check : 
-		stand : standard MIBII (works with Windows), 
-		        can handle multiple CPU.
-		netsl : linux load provided by Net SNMP (1,5 & 15 minutes values)
-		netsc : cpu usage given by net-snmp (100-idle)
-		as400 : as400 CPU usage
-		cisco : Cisco CPU usage
-		n5k   : Cisco Nexus CPU Usage
-		cata  : Cisco catalyst CPU usage
-		nsc   : NetScreen CPU usage
-		fg    : Fortigate CPU usage
-		bc    : Bluecoat CPU usage
-		nokia : Nokia CPU usage
-		hp    : HP procurve switch CPU usage
-		lp    : Linkproof CPU usage
-		hpux  : HP-UX load (1,5 & 15 minutes values)
+		stand  : standard MIBII (works with Windows), 
+		         can handle multiple CPU.
+		netsl  : linux load provided by Net SNMP (1,5 & 15 minutes values)
+		netsc  : cpu usage given by net-snmp (100-idle)
+		as400  : as400 CPU usage
+		cisco  : Cisco CPU usage
+		n5k    : Cisco Nexus CPU Usage
+		cata   : Cisco catalyst CPU usage
+		nsc    : NetScreen CPU usage
+		fg     : Fortigate CPU usage
+		bc     : Bluecoat CPU usage
+		nokia  : Nokia CPU usage
+		hp     : HP procurve switch CPU usage
+		lp     : Linkproof CPU usage
+		hpux   : HP-UX load (1,5 & 15 minutes values)
+		polygon: Polygon CPU usage (5 seconds, 1 & 5 minutes values)
 -f, --perfparse, --perfdata
    Performance data output
 -t, --timeout=INTEGER
@@ -257,7 +263,7 @@ sub check_options {
     $o_crit =~ s/\%//g;
     # Check for multiple warning and crit in case of -L
 	if (($o_check_type eq "netsl") || ($o_check_type eq "cisco") || ($o_check_type eq "cata") || 
-		($o_check_type eq "nsc") || ($o_check_type eq "hpux")) {
+		($o_check_type eq "nsc") || ($o_check_type eq "hpux") || ($o_check_type eq "polygon")) {
 		@o_warnL=split(/,/ , $o_warn);
 		@o_critL=split(/,/ , $o_crit);
 		if (($#o_warnL != 2) || ($#o_critL != 2)) 
@@ -758,6 +764,63 @@ if (defined($o_perf)) {
    print "load_15_min=$load[2]%;$o_warnL[2];$o_critL[2]\n";
 } else {
  print "\n";
+}
+
+exit $exit_val;
+}
+
+##### Checking polygon load
+if ($o_check_type eq "polygon") {
+
+verb("Checking polygon load");
+
+my @oidlists = ($plgn_load_5_sec, $plgn_load_1_min, $plgn_load_5_min);
+my $resultat = (is_legacy_snmp_version()) ?
+    $session->get_request(@oidlists)
+  : $session->get_request(-varbindlist => \@oidlists);
+
+if (!defined($resultat)) {
+  printf("ERROR: Load table : %s.\n", $session->error);
+  $session->close;
+  exit $ERRORS{"UNKNOWN"};
+}
+
+$session->close;
+
+if (!defined ($$resultat{$plgn_load_5_sec})) {
+  print "No Load information : UNKNOWN\n";
+  exit $ERRORS{"UNKNOWN"};
+}
+
+my @load = undef;
+
+$load[0]=$$resultat{$plgn_load_5_sec}/10;
+$load[1]=$$resultat{$plgn_load_1_min}/10;
+$load[2]=$$resultat{$plgn_load_5_min}/10;
+
+print "Load (%): $load[0] $load[1] $load[2] :";
+
+$exit_val=$ERRORS{"OK"};
+for (my $i=0;$i<3;$i++) {
+  if ( $load[$i] > $o_critL[$i] ) {
+    print " $load[$i] > $o_critL[$i] : CRITICAL";
+    $exit_val=$ERRORS{"CRITICAL"};
+  }
+  if ( $load[$i] > $o_warnL[$i] ) {
+    # output warn error only if no critical was found
+    if ($exit_val eq $ERRORS{"OK"}) {
+      print " $load[$i] > $o_warnL[$i] : WARNING";
+      $exit_val=$ERRORS{"WARNING"};
+    }
+  }
+}
+print " OK" if ($exit_val eq $ERRORS{"OK"});
+if (defined($o_perf)) {
+  print " | load_1_min=$load[0]%;$o_warnL[0];$o_critL[0] ";
+  print "load_5_min=$load[1]%;$o_warnL[1];$o_critL[1] ";
+  print "load_15_min=$load[2]%;$o_warnL[2];$o_critL[2]\n";
+} else {
+  print "\n";
 }
 
 exit $exit_val;
