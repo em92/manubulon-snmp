@@ -49,6 +49,11 @@ my $hp_mem_total	= "1.3.6.1.4.1.11.2.14.11.5.1.1.2.2.1.1.5"; # Total Bytes
 my $hp_mem_free		= "1.3.6.1.4.1.11.2.14.11.5.1.1.2.2.1.1.6"; # Free Bytes
 my $hp_mem_free_seg	= "1.3.6.1.4.1.11.2.14.11.5.1.1.2.2.1.1.3"; # Free segments
 
+# Polygon
+my $plgn_mem_total	= "1.3.6.1.4.1.14885.1000.5.1.1.1.1.5.100"; # Total
+my $plgn_mem_free		= "1.3.6.1.4.1.14885.1000.5.1.1.1.1.7.100"; # Free
+my @plgn_oids		= ($plgn_mem_free, $plgn_mem_total);
+
 # AS/400 
 
 # Windows NT/2K/(XP?)
@@ -69,6 +74,7 @@ my $o_version=	undef;		# print version
 my $o_netsnmp=	1;		# Check with netsnmp (default)
 my $o_cisco=	undef;		# Check cisco router mem
 my $o_hp=	undef;		# Check hp procurve mem
+my $o_polygon=	undef;		# Check polygon device mem
 my $o_warn=	undef;		# warning level option
 my $o_warnR=	undef;		# warning level for Real memory
 my $o_warnS=	undef;		# warning levels for swap
@@ -155,6 +161,8 @@ sub help {
    check cisco memory (sum of all memory pools)
 -E, --hp
    check HP proccurve memory
+--polygon
+   check polygon device memory
 -f, --perfdata
    Performance data output
 -t, --timeout=INTEGER
@@ -191,6 +199,7 @@ sub check_options {
 	'I'	=> \$o_cisco,		'cisco'		=> \$o_cisco,
 	'N'	=> \$o_netsnmp,		'netsnmp'	=> \$o_netsnmp,
         'E'	=> \$o_hp,		'hp'		=> \$o_hp,
+        'polygon' => \$o_polygon,
         '2'     => \$o_version2,        'v2c'           => \$o_version2,
         'c:s'   => \$o_crit,            'critical:s'    => \$o_crit,
         'w:s'   => \$o_warn,            'warn:s'        => \$o_warn,
@@ -224,8 +233,8 @@ sub check_options {
     # Get rid of % sign
     $o_warn =~ s/\%//g; 
     $o_crit =~ s/\%//g;
-    # if -N or -E switch , undef $o_netsnmp
-    if (defined($o_cisco) || defined($o_hp) ) {
+    # if -N or -E or --polygon switch , undef $o_netsnmp
+    if (defined($o_cisco) || defined($o_hp) || defined($o_polygon)) {
       $o_netsnmp=undef;
       if ( isnnum($o_warn) || isnnum($o_crit)) 
 	{ print "Numeric value for warning or critical !\n";print_usage(); exit $ERRORS{"UNKNOWN"} }
@@ -402,6 +411,52 @@ if (defined ($o_cisco)) {
   $session->close; 
   print "$c_output \n";
   exit $ERRORS{$c_status};
+}
+
+########### Polygon memory check ############
+if (defined ($o_polygon)) {
+
+  # Get Polygon memory values
+  $resultat = (version->parse(Net::SNMP->VERSION) < 4) ?
+    $session->get_request(@plgn_oids) :
+    $session->get_request(-varbindlist => \@plgn_oids);
+
+  if (!defined($resultat)) {
+    printf("ERROR: polygon : %s.\n", $session->error);
+    $session->close;
+    exit $ERRORS{"UNKNOWN"};
+  }
+
+  my $realused = undef;
+  $realused = ($$resultat{$plgn_mem_total}-($$resultat{$plgn_mem_free})) / $$resultat{$plgn_mem_total};
+
+  if($$resultat{$plgn_mem_total} == 0) { $realused = 0; }
+
+  $realused=round($realused*100,0);
+  verb ("Free : $$resultat{$plgn_mem_free}, Total: $$resultat{$plgn_mem_total}");
+
+  my $n_status="OK";
+  my $n_output="Used : " . $realused . "%";
+  if (($o_crit!=0)&&($o_crit <= $realused)) {
+    $n_output .= " > " . $o_crit . "%";
+    $n_status="CRITICAL";
+  } else {
+    if (($o_warn!=0)&&($o_warn <= $realused)) {
+      $n_output.=" > " . $o_warn;
+      $n_status="WARNING";
+    }
+  }
+  $n_output .= " ; ".$n_status;
+  if (defined ($o_perf)) {
+    $n_output .= " | mem_used=" . ($$resultat{$plgn_mem_total}-$$resultat{$plgn_mem_free}).";";
+    $n_output .= ($o_warn ==0)? ";" : round($o_warn * $$resultat{$plgn_mem_total}/100,0).";";
+    $n_output .= ($o_crit ==0)? ";" : round($o_crit * $$resultat{$plgn_mem_total}/100,0).";";
+    $n_output .= "0;" . $$resultat{$plgn_mem_total};
+  }
+  $session->close;
+  print "$n_output \n";
+  exit $ERRORS{$n_status};
+
 }
 
 ########### HP Procurve memory check ############
