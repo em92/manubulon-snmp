@@ -233,31 +233,31 @@ sub check_options {
     # Get rid of % sign
     $o_warn =~ s/\%//g; 
     $o_crit =~ s/\%//g;
-    # if -N or -E or --polygon switch , undef $o_netsnmp
-    if (defined($o_cisco) || defined($o_hp) || defined($o_polygon)) {
-      $o_netsnmp=undef;
-      if ( isnnum($o_warn) || isnnum($o_crit)) 
-	{ print "Numeric value for warning or critical !\n";print_usage(); exit $ERRORS{"UNKNOWN"} }
-      if ( ($o_crit != 0) && ($o_warn > $o_crit) ) 
-        { print "warning <= critical ! \n";print_usage(); exit $ERRORS{"UNKNOWN"}}
-    }
-    if (defined($o_netsnmp)) {
-      my @o_warnL=split(/,/ , $o_warn);
-      my @o_critL=split(/,/ , $o_crit);
-      if (($#o_warnL != 1) || ($#o_critL != 1)) 
-	{ print "2 warnings and critical !\n";print_usage(); exit $ERRORS{"UNKNOWN"}}
-      for (my $i=0;$i<2;$i++) {
-	if ( isnnum($o_warnL[$i]) || isnnum($o_critL[$i])) 
-	    { print "Numeric value for warning or critical !\n";print_usage(); exit $ERRORS{"UNKNOWN"} }
-	if (($o_critL[$i]!= 0) && ($o_warnL[$i] > $o_critL[$i]))
-	   { print "warning <= critical ! \n";print_usage(); exit $ERRORS{"UNKNOWN"}}
- 	if ( $o_critL[$i] > 100)
-	   { print "critical percent must be < 100 !\n";print_usage(); exit $ERRORS{"UNKNOWN"}}
+    my @o_warnL=split(/,/ , $o_warn);
+    my @o_critL=split(/,/ , $o_crit);
+    if (!defined($o_warnL[1])) { $o_warnL[1] = $o_warnL[0] };
+    if (!defined($o_critL[1])) { $o_critL[1] = $o_critL[0] };
+    for (my $i=0;$i<2;$i++) {
+      if (isnnum($o_warnL[$i]) || isnnum($o_critL[$i])) {
+        print "Numeric value for warning or critical !\n";
+        print_usage();
+        exit $ERRORS{"UNKNOWN"}
       }
-      $o_warnR=$o_warnL[0];$o_warnS=$o_warnL[1];
-      $o_critR=$o_critL[0];$o_critS=$o_critL[1];
+      if (($o_critL[$i]!= 0) && ($o_warnL[$i] > $o_critL[$i])) {
+        print "warning <= critical ! \n";
+        print_usage();
+        exit $ERRORS{"UNKNOWN"}
+      }
+      if ( $o_critL[$i] > 100) {
+        print "critical percent must be < 100 !\n";
+        print_usage();
+        exit $ERRORS{"UNKNOWN"}
+      }
     }
-  
+    $o_warnR=$o_warnL[0];$o_warnS=$o_warnL[1];
+    $o_critR=$o_critL[0];$o_critS=$o_critL[1];
+    $o_warn=$o_warnL[0];
+    $o_crit=$o_critL[0];
 }
 
 ########## MAIN #######
@@ -336,6 +336,16 @@ if (!defined($session)) {
 # Global variable
 my $resultat=undef;
 
+# check if $o_polygon should be set
+$resultat = (version->parse(Net::SNMP->VERSION) < 4) ?
+  $session->get_request(@plgn_oids) :
+  $session->get_request(-varbindlist => \@plgn_oids);
+
+if (defined($resultat)) {
+  $o_polygon = $o_cisco;
+  $o_cisco = undef;
+}
+
 ########### Cisco memory check ############
 if (defined ($o_cisco)) {
 
@@ -413,52 +423,6 @@ if (defined ($o_cisco)) {
   exit $ERRORS{$c_status};
 }
 
-########### Polygon memory check ############
-if (defined ($o_polygon)) {
-
-  # Get Polygon memory values
-  $resultat = (version->parse(Net::SNMP->VERSION) < 4) ?
-    $session->get_request(@plgn_oids) :
-    $session->get_request(-varbindlist => \@plgn_oids);
-
-  if (!defined($resultat)) {
-    printf("ERROR: polygon : %s.\n", $session->error);
-    $session->close;
-    exit $ERRORS{"UNKNOWN"};
-  }
-
-  my $realused = undef;
-  $realused = ($$resultat{$plgn_mem_total}-($$resultat{$plgn_mem_free})) / $$resultat{$plgn_mem_total};
-
-  if($$resultat{$plgn_mem_total} == 0) { $realused = 0; }
-
-  $realused=round($realused*100,0);
-  verb ("Free : $$resultat{$plgn_mem_free}, Total: $$resultat{$plgn_mem_total}");
-
-  my $n_status="OK";
-  my $n_output="Used : " . $realused . "%";
-  if (($o_crit!=0)&&($o_crit <= $realused)) {
-    $n_output .= " > " . $o_crit . "%";
-    $n_status="CRITICAL";
-  } else {
-    if (($o_warn!=0)&&($o_warn <= $realused)) {
-      $n_output.=" > " . $o_warn;
-      $n_status="WARNING";
-    }
-  }
-  $n_output .= " ; ".$n_status;
-  if (defined ($o_perf)) {
-    $n_output .= " | mem_used=" . ($$resultat{$plgn_mem_total}-$$resultat{$plgn_mem_free}).";";
-    $n_output .= ($o_warn ==0)? ";" : round($o_warn * $$resultat{$plgn_mem_total}/100,0).";";
-    $n_output .= ($o_crit ==0)? ";" : round($o_crit * $$resultat{$plgn_mem_total}/100,0).";";
-    $n_output .= "0;" . $$resultat{$plgn_mem_total};
-  }
-  $session->close;
-  print "$n_output \n";
-  exit $ERRORS{$n_status};
-
-}
-
 ########### HP Procurve memory check ############
 if (defined ($o_hp)) {
 
@@ -528,6 +492,15 @@ if (defined ($o_hp)) {
   exit $ERRORS{$c_status};
 }
 
+# check if polygon oids exist
+$resultat = (version->parse(Net::SNMP->VERSION) < 4) ?
+  $session->get_request(@plgn_oids) :
+  $session->get_request(-varbindlist => \@plgn_oids);
+
+if (defined($resultat)) {
+  ($o_polygon, $o_netsnmp) = ($o_netsnmp, $o_polygon)
+}
+  
 ########### Net snmp memory check ############
 if (defined ($o_netsnmp)) {
 
@@ -589,6 +562,52 @@ if (defined ($o_netsnmp)) {
     $n_output .= ($o_critS ==0)? ";" : round($o_critS * $$resultat{$nets_swap_total}/100,0).";"; 
     $n_output .= "0;" . $$resultat{$nets_swap_total};
   }  
+  $session->close;
+  print "$n_output \n";
+  exit $ERRORS{$n_status};
+
+}
+
+########### Polygon memory check ############
+if (defined ($o_polygon)) {
+
+  # Get Polygon memory values
+  $resultat = (version->parse(Net::SNMP->VERSION) < 4) ?
+    $session->get_request(@plgn_oids) :
+    $session->get_request(-varbindlist => \@plgn_oids);
+
+  if (!defined($resultat)) {
+    printf("ERROR: polygon : %s.\n", $session->error);
+    $session->close;
+    exit $ERRORS{"UNKNOWN"};
+  }
+
+  my $realused = undef;
+  $realused = ($$resultat{$plgn_mem_total}-($$resultat{$plgn_mem_free})) / $$resultat{$plgn_mem_total};
+
+  if($$resultat{$plgn_mem_total} == 0) { $realused = 0; }
+
+  $realused=round($realused*100,0);
+  verb ("Free : $$resultat{$plgn_mem_free}, Total: $$resultat{$plgn_mem_total}");
+
+  my $n_status="OK";
+  my $n_output="Used : " . $realused . "%";
+  if (($o_crit!=0)&&($o_crit <= $realused)) {
+    $n_output .= " > " . $o_crit . "%";
+    $n_status="CRITICAL";
+  } else {
+    if (($o_warn!=0)&&($o_warn <= $realused)) {
+      $n_output.=" > " . $o_warn;
+      $n_status="WARNING";
+    }
+  }
+  $n_output .= " ; ".$n_status;
+  if (defined ($o_perf)) {
+    $n_output .= " | mem_used=" . ($$resultat{$plgn_mem_total}-$$resultat{$plgn_mem_free}).";";
+    $n_output .= ($o_warn ==0)? ";" : round($o_warn * $$resultat{$plgn_mem_total}/100,0).";";
+    $n_output .= ($o_crit ==0)? ";" : round($o_crit * $$resultat{$plgn_mem_total}/100,0).";";
+    $n_output .= "0;" . $$resultat{$plgn_mem_total};
+  }
   $session->close;
   print "$n_output \n";
   exit $ERRORS{$n_status};
