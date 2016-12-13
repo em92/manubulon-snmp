@@ -87,9 +87,9 @@ my $hpux_load_5_min="1.3.6.1.4.1.11.2.3.1.1.4.0";
 my $hpux_load_15_min="1.3.6.1.4.1.11.2.3.1.1.5.0";
 
 # Polygon cpu usage
-my $plgn_load_5_sec="1.3.6.1.4.1.14885.1000.5.1.1.1.1.2.100";
-my $plgn_load_1_min="1.3.6.1.4.1.14885.1000.5.1.1.1.1.3.100";
-my $plgn_load_5_min="1.3.6.1.4.1.14885.1000.5.1.1.1.1.4.100";
+my $plgn_load_5_sec="1.3.6.1.4.1.14885.1000.5.1.1.1.1.2";
+my $plgn_load_1_min="1.3.6.1.4.1.14885.1000.5.1.1.1.1.3";
+my $plgn_load_5_min="1.3.6.1.4.1.14885.1000.5.1.1.1.1.4";
 
 # valid values 
 my @valid_types = ("stand","netsc","netsl","as400","cisco","cata","nsc","fg","bc","nokia","hp","lp","hpux","n5k","polygon");
@@ -776,8 +776,18 @@ verb("Checking polygon load");
 
 my @oidlists = ($plgn_load_5_sec, $plgn_load_1_min, $plgn_load_5_min);
 my $resultat = (is_legacy_snmp_version()) ?
-    $session->get_request(@oidlists)
-  : $session->get_request(-varbindlist => \@oidlists);
+    $session->get_next_request(@oidlists)
+  : $session->get_next_request(-varbindlist => \@oidlists);
+
+my $old_key = undef;
+my $new_key = undef;
+my @keys = keys $resultat;
+while (@keys) {
+  $old_key = pop(@keys);
+  $new_key = $old_key;
+  $new_key =~ s/\.[0-9]+$//g;
+  $resultat->{$new_key} = delete $resultat->{$old_key};
+}
 
 if (!defined($resultat)) {
   printf("ERROR: Load table : %s.\n", $session->error);
